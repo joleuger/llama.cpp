@@ -147,5 +147,5 @@ private:
 
     server_queue & queue_tasks;
     server_response & queue_results;
-    std::unique_ptr<server_res_generator> create_response(bool bypass_sleep = false);
+    std::unique_ptr<server_res_generator> create_response(bool bypass_sleep = false, int keepalive_interval = 0);
 };

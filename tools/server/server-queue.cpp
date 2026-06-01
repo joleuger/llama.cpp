@@ -387,6 +387,11 @@ server_task_result_ptr server_response_reader::next(const std::function<bool()> 
                 }
                 return nullptr;
             }
+            // check if keepalive message needs to be sent
+            if (keepalive_interval_seconds > 0 && ggml_time_ms() > time_last_keepalive_msg_ms + keepalive_interval_seconds * 1000 ) {
+                time_last_keepalive_msg_ms = ggml_time_ms();
+                return std::make_unique<server_task_result_keepalive>();
+            }
         } else {
             if (result->is_error()) {
                 stop(); // cancel remaining tasks

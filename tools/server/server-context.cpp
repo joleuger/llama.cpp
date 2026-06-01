@@ -3463,7 +3463,7 @@ private:
     }
 
     server_response_reader get_response_reader() {
-        return server_response_reader(queue_tasks, queue_results, HTTP_POLLING_SECONDS);
+        return server_response_reader(queue_tasks, queue_results, HTTP_POLLING_SECONDS, 0);
     }
 };
 
@@ -3544,8 +3544,8 @@ server_context_meta server_context::get_meta() const {
 // may have bypass_sleep = true if the task does not use ctx_server
 struct server_res_generator : server_http_res {
     server_response_reader rd;
-    server_res_generator(server_queue & queue_tasks, server_response & queue_results, int sleep_idle_seconds, bool bypass_sleep = false)
-            : rd(queue_tasks, queue_results, HTTP_POLLING_SECONDS) {
+    server_res_generator(server_queue & queue_tasks, server_response & queue_results, int sleep_idle_seconds, bool bypass_sleep = false, int keepalive_interval = 0)
+            : rd(queue_tasks, queue_results, HTTP_POLLING_SECONDS, keepalive_interval) {
         // fast path in case sleeping is disabled
         bypass_sleep |= sleep_idle_seconds < 0;
         if (!bypass_sleep) {
@@ -3626,7 +3626,11 @@ std::unique_ptr<server_res_generator> server_routes::handle_completions_impl(
             task_response_type res_type) {
     GGML_ASSERT(type == SERVER_TASK_TYPE_COMPLETION || type == SERVER_TASK_TYPE_INFILL);
 
-    auto res = create_response();
+    bool stream = json_value(data, "stream", false);
+    // only send sse keepalives in event-streaming mode
+    bool sse_keepalive_interval_seconds = stream ? params.keepalive_interval : 0;
+
+    auto res = create_response(false, sse_keepalive_interval_seconds);
     auto completion_id = gen_chatcmplid();
     auto & rd = res->rd;
 
@@ -3698,8 +3702,6 @@ std::unique_ptr<server_res_generator> server_routes::handle_completions_impl(
         return res;
     }
 
-    bool stream = json_value(data, "stream", false);
-
     if (!stream) {
         // non-stream, wait for the results
         auto all_results = rd.wait_for_all(req.should_stop);
@@ -3747,7 +3749,8 @@ std::unique_ptr<server_res_generator> server_routes::handle_completions_impl(
 
         GGML_ASSERT(
             dynamic_cast<server_task_result_cmpl_partial*>(first_result.get()) != nullptr ||
-            dynamic_cast<server_task_result_cmpl_final*>  (first_result.get()) != nullptr
+            dynamic_cast<server_task_result_cmpl_final*>  (first_result.get()) != nullptr ||
+            dynamic_cast<server_task_result_keepalive*>  (first_result.get()) != nullptr
         );
 
         // next responses are streamed
@@ -3816,6 +3819,13 @@ std::unique_ptr<server_res_generator> server_routes::handle_completions_impl(
                     return false; // should_stop condition met
                 }
 
+                // send keepalive as a comment (line starting with a COLON character)
+                // see 9.2.6 of https://html.spec.whatwg.org/multipage/server-sent-events.html
+                if (dynamic_cast<server_task_result_keepalive*>(result.get()) != nullptr) {  
+                    output = ": keepalive\n\n";  
+                    return true;  
+                }  
+
                 // send the results
                 if (result->is_error()) {
                     json res_json = result->to_json();
@@ -3853,8 +3863,8 @@ std::unique_ptr<server_res_generator> server_routes::handle_completions_impl(
     return res;
 }
 
-std::unique_ptr<server_res_generator> server_routes::create_response(bool bypass_sleep) {
-    return std::make_unique<server_res_generator>(queue_tasks, queue_results, params.sleep_idle_seconds, bypass_sleep);
+std::unique_ptr<server_res_generator> server_routes::create_response(bool bypass_sleep, int keepalive_interval) {
+    return std::make_unique<server_res_generator>(queue_tasks, queue_results, params.sleep_idle_seconds, bypass_sleep, keepalive_interval);
 }
 
 server_routes::server_routes(const common_params & params, server_context & ctx_server)

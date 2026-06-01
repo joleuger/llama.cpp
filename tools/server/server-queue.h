@@ -168,16 +168,18 @@ struct server_response_reader {
     size_t received_count = 0;
     bool cancelled = false;
     int polling_interval_seconds;
+    int keepalive_interval_seconds;
 
     const int64_t time_start_ms = ggml_time_ms();
+    int64_t time_last_keepalive_msg_ms = ggml_time_ms();
 
     // tracking generation state and partial tool calls
     // only used by streaming completions
     std::vector<task_result_state> states;
 
     // should_stop function will be called each polling_interval_seconds
-    server_response_reader(server_queue & queue_tasks, server_response & queue_results, int polling_interval_seconds)
-        : queue_tasks(queue_tasks), queue_results(queue_results), polling_interval_seconds(polling_interval_seconds) {}
+    server_response_reader(server_queue & queue_tasks, server_response & queue_results, int polling_interval_seconds, int keepalive_interval_seconds)
+        : queue_tasks(queue_tasks), queue_results(queue_results), polling_interval_seconds(polling_interval_seconds), keepalive_interval_seconds(keepalive_interval_seconds) {}
     ~server_response_reader() {
         stop();
     }
